@@ -1,0 +1,31 @@
+# Ignore everything by default
+*
+
+# Keep this file
+!.gitignore
+
+# TypeScript source files
+!src/
+!src/*/
+!src/*/*/
+!**/*.ts
+
+# Test files
+!tests/
+!tests/*/
+
+# Project config needed to run the project
+!package.json
+!package-lock.json
+!tsconfig.json
+!jest.config.js
+!docker-compose.yml
+!.env.example
+
+# Docs
+!README.md
+!ASSIGNMENT.md
+
+# Database schema and seed data
+!db/
+!db/*.sql

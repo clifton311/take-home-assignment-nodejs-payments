@@ -189,3 +189,4 @@ The results are normalised in application code: every `CommissionStatus` and `Pa
 - **DB connection health check** — a `GET /health` that pings the pool before the load balancer sends traffic.
 - **Separate test database** in `docker-compose.yml` with its own volume, so integration tests can truncate/reseed without affecting the dev DB.
 # node.js_payments_routes
+# node.js_payments_routes

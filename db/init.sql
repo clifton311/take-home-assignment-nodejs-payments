@@ -303,6 +303,30 @@ INSERT INTO allocations (id, commission_id, party_id, party_type, percentage, am
 
 
 -- -----------------------------------------------------------
+-- Indexes
+-- -----------------------------------------------------------
+
+-- Primary filter on the list endpoint: date range (covers ORDER BY close_date too)
+CREATE INDEX IF NOT EXISTS idx_commissions_close_date
+  ON commissions (close_date);
+
+-- Composite index for the common team + date range filter
+CREATE INDEX IF NOT EXISTS idx_commissions_team_close_date
+  ON commissions (team_id, close_date);
+
+-- Status-only filter
+CREATE INDEX IF NOT EXISTS idx_commissions_status
+  ON commissions (status);
+
+-- FK join from allocations → commissions (PostgreSQL does not auto-create this)
+CREATE INDEX IF NOT EXISTS idx_allocations_commission_id
+  ON allocations (commission_id);
+
+-- Party type grouping in the summary query
+CREATE INDEX IF NOT EXISTS idx_allocations_party_type
+  ON allocations (party_type);
+
+-- -----------------------------------------------------------
 -- Reference totals for evaluators (do NOT send to candidates)
 -- -----------------------------------------------------------
 -- These are the known-good values evaluators can use to verify
