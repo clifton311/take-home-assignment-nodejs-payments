@@ -1,16 +1,18 @@
+import 'reflect-metadata';
 import request from 'supertest';
 import app from '../../src';
-import { pool } from '../../src/db/pool';
+import { AppDataSource } from '../../src/db/datasource';
 
-afterAll(() => pool.end());
+beforeAll(() => AppDataSource.initialize());
+afterAll(() => AppDataSource.destroy());
 
 // ---------------------------------------------------------------------------
-// GET /v1/commissions — transaction detail
+// GET /api/v1/commissions — transaction detail
 // ---------------------------------------------------------------------------
 
-describe('GET /v1/commissions', () => {
+describe('GET /api/v1/commissions', () => {
   it('returns 25 total commissions with default pagination', async () => {
-    const res = await request(app).get('/v1/commissions');
+    const res = await request(app).get('/api/v1/commissions');
     expect(res.status).toBe(200);
     expect(res.body.pagination.total).toBe(25);
     expect(res.body.pagination.page).toBe(1);
@@ -20,14 +22,14 @@ describe('GET /v1/commissions', () => {
   });
 
   it('respects page and limit', async () => {
-    const res = await request(app).get('/v1/commissions').query({ page: 2, limit: 10 });
+    const res = await request(app).get('/api/v1/commissions').query({ page: 2, limit: 10 });
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(10);
     expect(res.body.pagination.page).toBe(2);
   });
 
   it('embeds allocations on every commission', async () => {
-    const res = await request(app).get('/v1/commissions').query({ limit: 5 });
+    const res = await request(app).get('/api/v1/commissions').query({ limit: 5 });
     expect(res.status).toBe(200);
     for (const commission of res.body.data) {
       expect(Array.isArray(commission.allocations)).toBe(true);
@@ -36,7 +38,7 @@ describe('GET /v1/commissions', () => {
   });
 
   it('returns exact allocation data for a known commission (C01)', async () => {
-    const res = await request(app).get('/v1/commissions').query({
+    const res = await request(app).get('/api/v1/commissions').query({
       date_from: '2025-01-10',
       date_to: '2025-01-10',
     });
@@ -56,7 +58,7 @@ describe('GET /v1/commissions', () => {
   });
 
   it('filters to 9 commissions for March 2025 — all teams', async () => {
-    const res = await request(app).get('/v1/commissions').query({
+    const res = await request(app).get('/api/v1/commissions').query({
       date_from: '2025-03-01',
       date_to: '2025-03-31',
       limit: 100,
@@ -67,7 +69,7 @@ describe('GET /v1/commissions', () => {
   });
 
   it('filters to 5 commissions for March 2025 — team_alpha', async () => {
-    const res = await request(app).get('/v1/commissions').query({
+    const res = await request(app).get('/api/v1/commissions').query({
       team_id: 'a1a1a1a1-0000-4000-8000-000000000001',
       date_from: '2025-03-01',
       date_to: '2025-03-31',
@@ -79,7 +81,7 @@ describe('GET /v1/commissions', () => {
 
   it('filters by team_id — all results belong to that team', async () => {
     const teamId = 'b2b2b2b2-0000-4000-8000-000000000002';
-    const res = await request(app).get('/v1/commissions').query({ team_id: teamId, limit: 100 });
+    const res = await request(app).get('/api/v1/commissions').query({ team_id: teamId, limit: 100 });
     expect(res.status).toBe(200);
     for (const c of res.body.data) {
       expect(c.team_id).toBe(teamId);
@@ -87,7 +89,7 @@ describe('GET /v1/commissions', () => {
   });
 
   it('filters by status — all results have that status', async () => {
-    const res = await request(app).get('/v1/commissions').query({ status: 'finalized', limit: 100 });
+    const res = await request(app).get('/api/v1/commissions').query({ status: 'finalized', limit: 100 });
     expect(res.status).toBe(200);
     for (const c of res.body.data) {
       expect(c.status).toBe('finalized');
@@ -95,7 +97,7 @@ describe('GET /v1/commissions', () => {
   });
 
   it('returns empty data for a date range with no commissions', async () => {
-    const res = await request(app).get('/v1/commissions').query({
+    const res = await request(app).get('/api/v1/commissions').query({
       date_from: '2020-01-01',
       date_to: '2020-12-31',
     });
@@ -106,20 +108,20 @@ describe('GET /v1/commissions', () => {
   });
 
   it('returns 400 for an invalid status value', async () => {
-    const res = await request(app).get('/v1/commissions').query({ status: 'paid' });
+    const res = await request(app).get('/api/v1/commissions').query({ status: 'paid' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PARAMS');
     expect(res.body.message).toBeDefined();
   });
 
   it('returns 400 for a non-ISO date format', async () => {
-    const res = await request(app).get('/v1/commissions').query({ date_from: '01-01-2025' });
+    const res = await request(app).get('/api/v1/commissions').query({ date_from: '01-01-2025' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PARAMS');
   });
 
   it('returns 400 when date_from is after date_to', async () => {
-    const res = await request(app).get('/v1/commissions').query({
+    const res = await request(app).get('/api/v1/commissions').query({
       date_from: '2025-03-31',
       date_to: '2025-03-01',
     });
@@ -128,19 +130,19 @@ describe('GET /v1/commissions', () => {
   });
 
   it('returns 400 for a non-UUID team_id', async () => {
-    const res = await request(app).get('/v1/commissions').query({ team_id: 'bad-id' });
+    const res = await request(app).get('/api/v1/commissions').query({ team_id: 'bad-id' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PARAMS');
   });
 });
 
 // ---------------------------------------------------------------------------
-// GET /v1/commissions/summary — period summary
+// GET /api/v1/commissions/summary — period summary
 // ---------------------------------------------------------------------------
 
-describe('GET /v1/commissions/summary', () => {
+describe('GET /api/v1/commissions/summary', () => {
   it('returns correct totals for March 2025 — all teams', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03-01',
       date_to: '2025-03-31',
     });
@@ -151,7 +153,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns correct status breakdown for March 2025 — all teams', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03-01',
       date_to: '2025-03-31',
     });
@@ -167,7 +169,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns correct party type breakdown for March 2025 — all teams', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03-01',
       date_to: '2025-03-31',
     });
@@ -191,7 +193,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns correct totals for March 2025 — team_alpha only', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03-01',
       date_to: '2025-03-31',
       team_id: 'a1a1a1a1-0000-4000-8000-000000000001',
@@ -202,7 +204,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns all four statuses for February 2025 — draft count is zero, not missing', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-02-01',
       date_to: '2025-02-28',
     });
@@ -217,7 +219,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns zeros for a period with no data — not an error', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2020-01-01',
       date_to: '2020-12-31',
     });
@@ -236,7 +238,7 @@ describe('GET /v1/commissions/summary', () => {
 
   it('returns 400 when date_from is missing', async () => {
     const res = await request(app)
-      .get('/v1/commissions/summary')
+      .get('/api/v1/commissions/summary')
       .query({ date_to: '2025-03-31' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PARAMS');
@@ -244,14 +246,14 @@ describe('GET /v1/commissions/summary', () => {
 
   it('returns 400 when date_to is missing', async () => {
     const res = await request(app)
-      .get('/v1/commissions/summary')
+      .get('/api/v1/commissions/summary')
       .query({ date_from: '2025-03-01' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('INVALID_PARAMS');
   });
 
   it('returns 400 for a non-ISO date format', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03',
       date_to: '2025-03-31',
     });
@@ -260,7 +262,7 @@ describe('GET /v1/commissions/summary', () => {
   });
 
   it('returns 400 when date_from is after date_to', async () => {
-    const res = await request(app).get('/v1/commissions/summary').query({
+    const res = await request(app).get('/api/v1/commissions/summary').query({
       date_from: '2025-03-31',
       date_to: '2025-03-01',
     });

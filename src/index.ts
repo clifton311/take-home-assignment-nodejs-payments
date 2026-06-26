@@ -1,8 +1,10 @@
+import 'reflect-metadata';
 import express from 'express';
 import pinoHttp from 'pino-http';
+import cookieParser from 'cookie-parser';
 import { commissionsRouter } from './routes/commissions';
 import { logger } from './logger';
-import cookieParser from 'cookie-parser';
+import { AppDataSource } from './db/datasource';
 
 const app = express();
 
@@ -11,7 +13,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 
-app.use('/v1/commissions', commissionsRouter);
+app.use('/api/v1/commissions', commissionsRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ code: 'NOT_FOUND', message: 'Route not found' });
@@ -23,7 +25,14 @@ export default app;
 
 if (require.main === module) {
   const PORT = parseInt(process.env.PORT ?? '3000', 10);
-  app.listen(PORT, () => {
-    logger.info(`Server listening on port ${PORT}`);
-  });
+  AppDataSource.initialize()
+    .then(() => {
+      app.listen(PORT, () => {
+        logger.info(`Server listening on port ${PORT}`);
+      });
+    })
+    .catch((err: unknown) => {
+      logger.error({ err }, 'Failed to initialize database');
+      process.exit(1);
+    });
 }

@@ -1,4 +1,6 @@
-import { Pool } from 'pg';
+import { AppDataSource } from '../db/datasource';
+import { CommissionEntity } from '../entities/Commission';
+import { AllocationEntity } from '../entities/Allocation';
 import {
   CommissionListParams,
   CommissionListResult,
@@ -13,119 +15,46 @@ import {
   ALL_PARTY_TYPES,
 } from '../types';
 
-
-
-interface WhereClause {
-  sql: string;
-  values: unknown[];
-  nextIdx: number;
-}
-
-function buildCommissionWhere(
-  params: Pick<CommissionListParams, 'team_id' | 'status' | 'date_from' | 'date_to'>,
-  alias = 'c',
-  startIdx = 1
-): WhereClause {
-  const conditions: string[] = [];
-  const values: unknown[] = [];
-  let idx = startIdx;
-
-  if (params.team_id) {
-    conditions.push(`${alias}.team_id = $${idx++}`);
-    values.push(params.team_id);
-  }
-  if (params.status) {
-    conditions.push(`${alias}.status = $${idx++}`);
-    values.push(params.status);
-  }
-  if (params.date_from) {
-    conditions.push(`${alias}.close_date >= $${idx++}`);
-    values.push(params.date_from);
-  }
-  if (params.date_to) {
-    conditions.push(`${alias}.close_date <= $${idx++}`);
-    values.push(params.date_to);
-  }
-
-  return {
-    sql: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
-    values,
-    nextIdx: idx,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Model functions
-// ---------------------------------------------------------------------------
-
 export async function findCommissions(
-  pool: Pool,
   params: CommissionListParams
 ): Promise<CommissionListResult> {
-  const { page, limit } = params;
-  const offset = (page - 1) * limit;
-  const { sql: where, values, nextIdx } = buildCommissionWhere(params);
+  const { page, limit, team_id, status, date_from, date_to } = params;
 
-  // Run count and data fetch in parallel — single JOIN with json_agg avoids N+1
-  const [countResult, dataResult] = await Promise.all([
-    pool.query(`SELECT COUNT(*) AS count FROM commissions c ${where}`, values),
-    pool.query(
-      `SELECT
-         c.id,
-         c.team_id,
-         c.status,
-         c.close_date::text        AS close_date,
-         c.total_cents,
-         c.currency,
-         c.created_at,
-         c.updated_at,
-         COALESCE(
-           json_agg(
-             json_build_object(
-               'id',           a.id,
-               'party_id',     a.party_id,
-               'party_type',   a.party_type,
-               'percentage',   a.percentage::text,
-               'amount_cents', a.amount_cents
-             ) ORDER BY a.created_at
-           ) FILTER (WHERE a.id IS NOT NULL),
-           '[]'::json
-         ) AS allocations
-       FROM commissions c
-       LEFT JOIN allocations a ON a.commission_id = c.id
-       ${where}
-       GROUP BY c.id
-       ORDER BY c.close_date DESC, c.id
-       LIMIT $${nextIdx} OFFSET $${nextIdx + 1}`,
-      [...values, limit, offset]
-    ),
-  ]);
+  const qb = AppDataSource.getRepository(CommissionEntity)
+    .createQueryBuilder('c')
+    .leftJoinAndSelect('c.allocations', 'a')
+    .orderBy('c.close_date', 'DESC')
+    .addOrderBy('c.id', 'ASC')
+    .addOrderBy('a.created_at', 'ASC')
+    .skip((page - 1) * limit)
+    .take(limit);
 
-  const total = parseInt(countResult.rows[0].count as string, 10);
+  if (team_id)   qb.andWhere('c.team_id = :team_id',   { team_id });
+  if (status)    qb.andWhere('c.status = :status',      { status });
+  if (date_from) qb.andWhere('c.close_date >= :date_from', { date_from });
+  if (date_to)   qb.andWhere('c.close_date <= :date_to',   { date_to });
 
-  const data: Commission[] = dataResult.rows.map(row => ({
-    id: row.id as string,
-    team_id: row.team_id as string,
-    status: row.status as CommissionStatus,
-    close_date: row.close_date as string,
-    total_cents: Number(row.total_cents),
-    currency: row.currency as string,
-    created_at: (row.created_at as Date).toISOString(),
-    updated_at: (row.updated_at as Date).toISOString(),
-    allocations: (
-      row.allocations as Array<{
-        id: string;
-        party_id: string;
-        party_type: string;
-        percentage: string;
-        amount_cents: number;
-      }>
-    ).map(a => ({
-      id: a.id,
-      party_id: a.party_id,
-      party_type: a.party_type as PartyType,
-      percentage: a.percentage,
-      amount_cents: Number(a.amount_cents),
+  const [entities, total] = await qb.getManyAndCount();
+
+  const data: Commission[] = entities.map(entity => ({
+    id: entity.id,
+    team_id: entity.team_id,
+    status: entity.status as CommissionStatus,
+    // pg returns DATE columns as strings; guard for any driver that returns Date
+    close_date:
+      typeof entity.close_date === 'string'
+        ? entity.close_date
+        : (entity.close_date as unknown as Date).toISOString().split('T')[0],
+    total_cents: Number(entity.total_cents),
+    currency: entity.currency,
+    created_at: entity.created_at.toISOString(),
+    updated_at: entity.updated_at.toISOString(),
+    allocations: entity.allocations.map(allocation => ({
+      id: allocation.id,
+      party_id: allocation.party_id,
+      party_type: allocation.party_type as PartyType,
+      percentage: allocation.percentage,
+      amount_cents: Number(allocation.amount_cents),
     })),
   }));
 
@@ -141,67 +70,69 @@ export async function findCommissions(
 }
 
 export async function getPeriodSummary(
-  pool: Pool,
   params: PeriodSummaryParams
 ): Promise<PeriodSummaryResult> {
   const { date_from, date_to, team_id } = params;
+  const dateParams = { date_from, date_to };
 
-  // Fixed positional params: $1=date_from, $2=date_to, optional $3=team_id
-  const baseValues: unknown[] = [date_from, date_to];
-  const teamCondition = team_id ? 'AND c.team_id = $3' : '';
-  if (team_id) baseValues.push(team_id);
+  const commissionRepo = AppDataSource.getRepository(CommissionEntity);
+  const allocationRepo = AppDataSource.getRepository(AllocationEntity);
 
-  const dateRange = 'c.close_date >= $1 AND c.close_date <= $2';
+  const totalQb = commissionRepo
+    .createQueryBuilder('c')
+    .select('COUNT(*)', 'commission_count')
+    .addSelect('COALESCE(SUM(c.total_cents), 0)', 'total_gci_cents')
+    .where('c.close_date >= :date_from AND c.close_date <= :date_to', dateParams);
 
-  const [totalResult, statusResult, partyResult] = await Promise.all([
-    pool.query(
-      `SELECT
-         COUNT(*)                        AS commission_count,
-         COALESCE(SUM(c.total_cents), 0) AS total_gci_cents
-       FROM commissions c
-       WHERE ${dateRange} ${teamCondition}`,
-      baseValues
-    ),
-    pool.query(
-      `SELECT
-         c.status,
-         COUNT(*)                        AS count,
-         COALESCE(SUM(c.total_cents), 0) AS total_cents
-       FROM commissions c
-       WHERE ${dateRange} ${teamCondition}
-       GROUP BY c.status`,
-      baseValues
-    ),
-    pool.query(
-      `SELECT
-         a.party_type,
-         COUNT(*)                         AS allocation_count,
-         COALESCE(SUM(a.amount_cents), 0) AS total_cents
-       FROM allocations a
-       JOIN commissions c ON c.id = a.commission_id
-       WHERE ${dateRange} ${teamCondition}
-       GROUP BY a.party_type`,
-      baseValues
-    ),
+  const statusQb = commissionRepo
+    .createQueryBuilder('c')
+    .select('c.status', 'status')
+    .addSelect('COUNT(*)', 'count')
+    .addSelect('COALESCE(SUM(c.total_cents), 0)', 'total_cents')
+    .where('c.close_date >= :date_from AND c.close_date <= :date_to', dateParams)
+    .groupBy('c.status');
+
+  const partyQb = allocationRepo
+    .createQueryBuilder('a')
+    .innerJoin('a.commission', 'c')
+    .select('a.party_type', 'party_type')
+    .addSelect('COUNT(*)', 'allocation_count')
+    .addSelect('COALESCE(SUM(a.amount_cents), 0)', 'total_cents')
+    .where('c.close_date >= :date_from AND c.close_date <= :date_to', dateParams)
+    .groupBy('a.party_type');
+
+  if (team_id) {
+    totalQb.andWhere('c.team_id = :team_id', { team_id });
+    statusQb.andWhere('c.team_id = :team_id', { team_id });
+    partyQb.andWhere('c.team_id = :team_id', { team_id });
+  }
+
+  type TotalRow  = { commission_count: string; total_gci_cents: string };
+  type StatusRow = { status: string; count: string; total_cents: string };
+  type PartyRow  = { party_type: string; allocation_count: string; total_cents: string };
+
+  const [totalRow, statusRows, partyRows] = await Promise.all([
+    totalQb.getRawOne<TotalRow>(),
+    statusQb.getRawMany<StatusRow>(),
+    partyQb.getRawMany<PartyRow>(),
   ]);
 
   const statusMap = new Map<string, { count: number; total_cents: number }>();
-  for (const row of statusResult.rows) {
-    statusMap.set(row.status as string, {
-      count: parseInt(row.count as string, 10),
+  for (const row of statusRows) {
+    statusMap.set(row.status, {
+      count: parseInt(row.count, 10),
       total_cents: Number(row.total_cents),
     });
   }
 
   const partyMap = new Map<string, { allocation_count: number; total_cents: number }>();
-  for (const row of partyResult.rows) {
-    partyMap.set(row.party_type as string, {
-      allocation_count: parseInt(row.allocation_count as string, 10),
+  for (const row of partyRows) {
+    partyMap.set(row.party_type, {
+      allocation_count: parseInt(row.allocation_count, 10),
       total_cents: Number(row.total_cents),
     });
   }
 
-  // Always include every status/party type even if count is zero
   const by_status: StatusBreakdown[] = ALL_STATUSES.map(status => ({
     status,
     count: statusMap.get(status)?.count ?? 0,
@@ -216,8 +147,8 @@ export async function getPeriodSummary(
 
   return {
     period: { date_from, date_to },
-    commission_count: parseInt(totalResult.rows[0].commission_count as string, 10),
-    total_gci_cents: Number(totalResult.rows[0].total_gci_cents),
+    commission_count: parseInt(totalRow!.commission_count, 10),
+    total_gci_cents: Number(totalRow!.total_gci_cents),
     by_status,
     by_party_type,
   };
