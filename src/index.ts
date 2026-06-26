@@ -21,18 +21,19 @@ app.use((_req, res) => {
 
 
 
-export default app;
 
 if (require.main === module) {
   const PORT = parseInt(process.env.PORT ?? '3000', 10);
   AppDataSource.initialize()
-    .then(() => {
-      app.listen(PORT, () => {
-        logger.info(`Server listening on port ${PORT}`);
-      });
-    })
-    .catch((err: unknown) => {
-      logger.error({ err }, 'Failed to initialize database');
-      process.exit(1);
+  .then(() => {
+    app.listen(PORT, () => {
+      logger.info(`Server listening on port ${PORT}`);
     });
+  })
+  .catch((err: unknown) => {
+    logger.error({ err }, 'Failed to initialize database');
+    process.exit(1);
+  });
 }
+
+export default app;

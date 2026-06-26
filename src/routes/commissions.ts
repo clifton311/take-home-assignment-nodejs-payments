@@ -1,10 +1,9 @@
 import { Router } from 'express';
-import { listCommissions, periodSummary } from '../controllers/commission';
+import { listCommissions, periodSummary, statusSummary, partyTypeSummary } from '../controllers/commission';
 
 export const commissionsRouter = Router();
 
-// GET /commissions/summary 
+commissionsRouter.get('/summary/by-status', statusSummary);
+commissionsRouter.get('/summary/by-party-type', partyTypeSummary);
 commissionsRouter.get('/summary', periodSummary);
-
-// GET /commissions
 commissionsRouter.get('/', listCommissions);

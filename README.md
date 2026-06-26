@@ -37,30 +37,9 @@ Returns a paginated list of commissions with allocations embedded on each record
 | `page` | integer ≥ 1 | Default: 1 |
 | `limit` | integer 1–100 | Default: 20 |
 
-**Example response**
 
-```json
-{
-  "data": [
-    {
-      "id": "10000000-0000-4000-8000-000000000011",
-      "team_id": "a1a1a1a1-0000-4000-8000-000000000001",
-      "status": "finalized",
-      "close_date": "2025-03-05",
-      "total_cents": 850000,
-      "currency": "USD",
-      "created_at": "2025-03-02T10:00:00.000Z",
-      "updated_at": "2025-03-05T14:00:00.000Z",
-      "allocations": [
-        { "id": "...", "party_id": "...", "party_type": "team_member", "percentage": "0.5000", "amount_cents": 425000 },
-        { "id": "...", "party_id": "...", "party_type": "external_agent", "percentage": "0.3000", "amount_cents": 255000 },
-        { "id": "...", "party_id": "...", "party_type": "brokerage", "percentage": "0.2000", "amount_cents": 170000 }
-      ]
-    }
-  ],
-  "pagination": { "page": 1, "limit": 20, "total": 9, "total_pages": 1 }
-}
-```
+
+
 
 ---
 
@@ -76,28 +55,52 @@ Returns aggregate totals for a time period. Both date params are required.
 | `date_to` | `YYYY-MM-DD` | Required. Period end (inclusive) |
 | `team_id` | UUID | Optional. Scope to a single team |
 
+
+All four statuses and all three party types are always present in the response — counts default to zero if no data exists for that bucket. A period with no matching commissions returns zeros, not an error.
+
+---
+
+### `GET /commissions/summary/by-status`
+
+Returns totals for a single commission status within a time period.
+
+**Query parameters**
+
+| Param | Type | Description |
+|---|---|---|
+| `date_from` | `YYYY-MM-DD` | Required. Period start (inclusive) |
+| `date_to` | `YYYY-MM-DD` | Required. Period end (inclusive) |
+| `status` | string | Required. `draft`, `pending_approval`, `approved`, or `finalized` |
+| `team_id` | UUID | Optional. Scope to a single team |
+
+
+---
+
+### `GET /commissions/summary/by-party-type`
+
+Returns allocation totals for a single party type within a time period.
+
+**Query parameters**
+
+| Param | Type | Description |
+|---|---|---|
+| `date_from` | `YYYY-MM-DD` | Required. Period start (inclusive) |
+| `date_to` | `YYYY-MM-DD` | Required. Period end (inclusive) |
+| `party_type` | string | Required. `team_member`, `external_agent`, or `brokerage` |
+| `team_id` | UUID | Optional. Scope to a single team |
+
 **Example response**
 
 ```json
 {
   "period": { "date_from": "2025-03-01", "date_to": "2025-03-31" },
-  "commission_count": 9,
-  "total_gci_cents": 5220000,
-  "by_status": [
-    { "status": "draft",            "count": 2, "total_cents": 650000  },
-    { "status": "pending_approval", "count": 1, "total_cents": 400000  },
-    { "status": "approved",         "count": 2, "total_cents": 930000  },
-    { "status": "finalized",        "count": 4, "total_cents": 3240000 }
-  ],
-  "by_party_type": [
-    { "party_type": "team_member",    "allocation_count": 9, "total_cents": 2815500 },
-    { "party_type": "external_agent", "allocation_count": 5, "total_cents": 1051000 },
-    { "party_type": "brokerage",      "allocation_count": 9, "total_cents": 1353500 }
-  ]
+  "party_type": "team_member",
+  "allocation_count": 9,
+  "total_cents": 2815500
 }
 ```
 
-All four statuses and all three party types are always present in the response — counts default to zero if no data exists for that bucket. A period with no matching commissions returns zeros, not an error.
+Returns `allocation_count: 0, total_cents: 0` when no allocations exist for that party type in the period.
 
 ---
 
@@ -119,7 +122,7 @@ All errors share the same shape:
 
 ## Design decisions
 
-**Page-based pagination over cursor-based.** Finance uses this for month-end batch review, not infinite scroll. They need "page 2 of March" semantics, so offset pagination fits. Cursor pagination would add complexity with no benefit here.
+**Page-based pagination over cursor-based.** Opted for Page-based pagination based on the limited data seed data. However, in production Cursor pagination would be a potential refactor point.  Cursor pagination would add complexity with no benefit for this exercise.
 
 **`date_from`/`date_to` required for summary, optional for list.** The summary endpoint powers a dashboard that always has a period in mind — requiring both bounds avoids accidentally aggregating all 25 commissions. The list endpoint allows open-ended browsing, so both bounds are optional.
 
@@ -155,6 +158,14 @@ Three parallel queries:
 
 The results are normalised in application code: every `CommissionStatus` and `PartyType` enum value is always present, with zeros as the default.
 
+### `GET /commissions/summary/by-status` — single-status focused query
+
+Single query: `COUNT(*) + SUM(total_cents) WHERE status = $1`. Useful when the dashboard only needs numbers for one status (e.g. drilling into "all finalized this month") without paying for the full four-way breakdown.
+
+### `GET /commissions/summary/by-party-type` — single-party-type focused query
+
+Single query: `COUNT(*) + SUM(amount_cents) WHERE party_type = $1` joined to `commissions` for the date and optional team filter. Useful for viewing one party type's earnings in isolation.
+
 ### Indexes added
 
 | Index | Rationale |
@@ -171,13 +182,9 @@ The results are normalised in application code: every `CommissionStatus` and `Pa
 
 **Unit tests** (`tests/unit/parseParams.test.ts`) cover the parameter validation layer in isolation — no DB, no HTTP. Every valid input variation and every error path is exercised.
 
-**Integration tests** (`tests/integration/commissions.test.ts`) spin up the real Express app against the Docker Compose database (no mocks). They assert exact values against the known seed data documented in `db/init.sql`, including:
+**Integration tests** (`tests/integration/commissions.test.ts`) spin up the real Express app against the Docker Compose database (no mocks). They assert exact values against the known seed data documented in `db/init.sql`, including pagination totals, per-commission allocation data, filter correctness, sort order, response shapes, and zeros-not-errors for empty periods. Negative cases cover every invalid param combination for all four endpoints.
 
-- Correct commission counts and GCI totals for March 2025 (all teams and team_alpha)
-- February 2025 — `draft` count is 0, not missing from the response
-- A period with no data (2020) returns zeros, not an error
-- Allocation data embedded correctly on a specific known commission
-- All filter combinations and validation error paths
+**Unit tests** for controllers (`tests/unit/commission.controller.test.ts`) mock the model layer to verify the HTTP layer in isolation: valid params → 200 with model called correctly, invalid params → 400 without touching the model, model throws → 500.
 
 ---
 
@@ -185,8 +192,6 @@ The results are normalised in application code: every `CommissionStatus` and `Pa
 
 - **Cursor-based pagination** for very large datasets where deep offsets get slow.
 - **Request ID / structured logging** — attach a trace ID to every request and log it with errors so ops can correlate failures.
-- **OpenAPI spec** — auto-generate docs and use them to validate request/response shapes in tests.
 - **DB connection health check** — a `GET /health` that pings the pool before the load balancer sends traffic.
-- **Separate test database** in `docker-compose.yml` with its own volume, so integration tests can truncate/reseed without affecting the dev DB.
-# node.js_payments_routes
-# node.js_payments_routes
+
+

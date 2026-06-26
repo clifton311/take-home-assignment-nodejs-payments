@@ -80,6 +80,34 @@ export interface PeriodSummaryResult {
   by_party_type: PartyTypeBreakdown[];
 }
 
+export interface StatusSummaryParams {
+  date_from: string;
+  date_to: string;
+  status: CommissionStatus;
+  team_id?: string;
+}
+
+export interface StatusSummaryResult {
+  period: { date_from: string; date_to: string };
+  status: CommissionStatus;
+  count: number;
+  total_cents: number;
+}
+
+export interface PartyTypeSummaryParams {
+  date_from: string;
+  date_to: string;
+  party_type: PartyType;
+  team_id?: string;
+}
+
+export interface PartyTypeSummaryResult {
+  period: { date_from: string; date_to: string };
+  party_type: PartyType;
+  allocation_count: number;
+  total_cents: number;
+}
+
 // ---------- Error shape ----------
 
 export interface ApiError {

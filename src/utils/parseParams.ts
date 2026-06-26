@@ -1,10 +1,23 @@
-import { CommissionStatus, CommissionListParams, PeriodSummaryParams } from '../types';
+import {
+  CommissionStatus,
+  CommissionListParams,
+  PartyType,
+  PartyTypeSummaryParams,
+  PeriodSummaryParams,
+  StatusSummaryParams,
+} from '../types';
 
 const VALID_STATUSES = new Set<string>([
   'draft',
   'pending_approval',
   'approved',
   'finalized',
+]);
+
+const VALID_PARTY_TYPES = new Set<string>([
+  'team_member',
+  'external_agent',
+  'brokerage',
 ]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -83,5 +96,45 @@ export function parsePeriodSummaryParams(
       date_to,
       team_id: team_id as string | undefined,
     },
+  };
+}
+
+export function parseStatusSummaryParams(
+  query: Record<string, unknown>
+): ParseResult<StatusSummaryParams> {
+  const base = parsePeriodSummaryParams(query);
+  if (!base.ok) return base;
+
+  const { status } = query;
+  if (!status || typeof status !== 'string' || !VALID_STATUSES.has(status)) {
+    return {
+      ok: false,
+      error: 'status is required and must be one of: draft, pending_approval, approved, finalized',
+    };
+  }
+
+  return {
+    ok: true,
+    value: { ...base.value, status: status as CommissionStatus },
+  };
+}
+
+export function parsePartyTypeSummaryParams(
+  query: Record<string, unknown>
+): ParseResult<PartyTypeSummaryParams> {
+  const base = parsePeriodSummaryParams(query);
+  if (!base.ok) return base;
+
+  const { party_type } = query;
+  if (!party_type || typeof party_type !== 'string' || !VALID_PARTY_TYPES.has(party_type)) {
+    return {
+      ok: false,
+      error: 'party_type is required and must be one of: team_member, external_agent, brokerage',
+    };
+  }
+
+  return {
+    ok: true,
+    value: { ...base.value, party_type: party_type as PartyType },
   };
 }
